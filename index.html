@@ -28,14 +28,13 @@
             }
         </script>
         <script id="shader-fs" type="x-shader/x-fragment">
-            #
-            extension GL_OES_standard_derivatives: enable
+            #extension GL_OES_standard_derivatives: enable
 
-            # ifdef GL_ES
-             precision mediump float;#
-            endif
+            #ifdef GL_ES
+            precision mediump float;
+            #endif
 
-             uniform int waveType;
+            uniform int waveType;
             uniform float time;
             uniform int mode;
             uniform vec2 resolution;
