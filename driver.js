@@ -2,16 +2,15 @@
 
 window.start = start;
 
-
 /** waves are passed to the shader
  *
  * each wave has four elements: x, y, time, hue
  * x,y are the floating point coordinates of the mouse in the range [0,1]
- * time is fractional seconds. -1 time means the wave is disabled.
+ * time is fractional seconds. if time = -1.0 the wave is disabled.
  * hue is in the range [0,1]
  */
-var wavesLength = 50;
 var waves = []; 
+var wavesLength = 50;   // length of the waves array
 
 var gl;
 var program;
@@ -26,16 +25,64 @@ var triangleVertices = [
    -1.0,  1.0
 ];
 
-var tickFns = [];
-var frozen = false;
-var lastRenderMillis = 0;
-var time=0.0;
-var Control = function() {
-  this.speed = 1.0;
-  // Define render logic ...
-};
-var gui = new dat.GUI();
-gui.add(text, 'speed', -5, 5);
+var tickFns = [];           // arbitrary functions called on every frame
+var frozen = false;         // set to millis to freeze animation at that frame
+var lastRenderMillis = 0;   // true millis of previous frame, ignoring frozen-ness
+var control;                // control panel state
+var time=0;
+/**  setup control panel */
+function controlPanel(randomizeFn, freezeFn) {
+  var gui = new dat.GUI(),
+      control = {
+          speed: 1.0,
+          mode: 1,
+          wave: 1,
+          randomize: randomizeFn,
+          freeze: toFreeze,
+          unfreeze: toFreeze
+      };
+  gui.add(control, 'speed', -5, 5);
+  gui.add(control, 'mode', { Normal: 1, '3D':2 } );
+  gui.add(control, 'wave', { Sine: 1, Square:2,Peak:3 } );
+  gui.add(control, 'randomize');
+  var freezeControl = gui.add(control, 'freeze');
+
+  return control;
+
+  function toFreeze() {
+      freezeFn();
+      freezeControl.remove();
+
+      if (frozen) {
+          freezeControl = gui.add(control, 'unfreeze');
+      } else {
+          freezeControl = gui.add(control, 'freeze');
+      }
+  }
+}
+
+// TODO DRY with setupCanvas
+function resize(gl) {
+  // Get the canvas from the WebGL context
+  var canvas = gl.canvas;
+ 
+  // Lookup the size the browser is displaying the canvas.
+  var displayWidth  = canvas.clientWidth;
+  var displayHeight = canvas.clientHeight;
+ 
+  // Check if the canvas is not the same size.
+  if (canvas.width  != displayWidth ||
+      canvas.height != displayHeight) {
+ 
+    // Make the canvas the same size
+    canvas.width  = displayWidth;
+    canvas.height = displayHeight;
+ 
+    // Set the viewport to match
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+}
+
 /** Setup a webgl canvas to draw with our shaders. 
  *  returns the compiled shader program and the webgl context */
 function setupWebGL(canvas) {
@@ -61,6 +108,8 @@ function setupWebGL(canvas) {
         program.waves = gl.getUniformLocation(program, "waves");
         program.time = gl.getUniformLocation(program, "time");
         program.resolution = gl.getUniformLocation(program, "resolution");
+        program.waveType = gl.getUniformLocation(program, "waveType");
+        program.mode = gl.getUniformLocation(program, "mode");
     }
 
     function setupShaders(gl, params) {
@@ -90,8 +139,17 @@ function focus(elem) {
     elem.focus();
 }
 
+/** freeze animation, or unfreeze if already frozen */
+function toggleFreeze() {
+   if (frozen) {
+      frozen = false;
+   } else {
+      frozen = lastRenderMillis;
+   }
+}
+
 /** setup handling of mouse and keyboard events. */
-function setupEvents(canvas, frameCounter) {
+function setupEvents(canvas) {
     var randomHue = randomMarkov(.05, .1, .5),
         mouse = setupMouse(canvas);
     setupKeys(canvas, mouse);
@@ -102,26 +160,23 @@ function setupEvents(canvas, frameCounter) {
             leftArrow = 0x25,
             downArrow = 0x28,
             cKey = 0x43,
+            tKey = 0x54,
             frameMillis = 1000/60;
         canvas.onkeydown = function(e) {
             if (e.keyCode == spaceKey) {
-               if (frozen) {
-                  frozen = false;
-               } else {
-                  frozen = lastRenderMillis;
-               }
+              toggleFreeze();
             } else if (e.keyCode == rightArrow && frozen) {
-               frozen += frameMillis;
-               frameCounter();
+               time += frameMillis*control.speed;
             } else if (e.keyCode == leftArrow && frozen) {
-               frozen -= frameMillis;
-               frameCounter();
+               time -= frameMillis*control.speed;
             } else if (e.keyCode == downArrow) {
-               addWave(mouse.mouseXY(), lastRenderMillis);
+               addWave(mouse.mouseXY(), frozen ? frozen : lastRenderMillis);
             } else if (e.keyCode == cKey) {
                clearWaves();
+            } else if (e.keyCode == tKey) {
+               oneTestWave();
             } else {
-              console.log(e.keyCode);
+              // console.log(e.keyCode);
             }
          }
     }
@@ -147,7 +202,7 @@ function setupEvents(canvas, frameCounter) {
         canvas.onmousemove = saveMouse;
 
         function saveMouse(e) {
-             mouseXY = [e.clientX / window.innerWidth,
+             mouseXY = [e.clientX / window.innerHeight,
                         1 - e.clientY / window.innerHeight];
         }
 
@@ -164,16 +219,6 @@ function setupEvents(canvas, frameCounter) {
         return {mouseXY: function() {return mouseXY; }}      
     }
 
-}
-
-/* disable all waves */
-function clearWaves() {
-    for (var i = 0; i < wavesLength * 4;) {
-        waves[i++] = [0.5];
-        waves[i++] = [0.5];
-        waves[i++] = [-1.0];
-        waves[i++] = [0.0];
-    }
 }
 
 /** return a function that returns a random number in the range [0, 1].
@@ -221,8 +266,19 @@ function randomMarkov(thisState, newStateChance, newState) {
 
 }
 
+
+/* disable all waves */
+function clearWaves() {
+    for (var i = 0; i < wavesLength * 4;) {
+        waves[i++] = [0.5];
+        waves[i++] = [0.5];
+        waves[i++] = [-1.0];
+        waves[i++] = [0.0];
+    }
+}
+
 /** initialize a pretty random pattern of starting waves */
-function initWaves() {
+function randomWaves() {
     var randomX = randomMarkov(.1, .1, .4),
         randomY = randomMarkov(.1, .1, .4),
         randomTime = randomMarkov(.5, 0),
@@ -235,76 +291,62 @@ function initWaves() {
     }
 }
 
-/** Setup one fixed wave. Useful for debugging */
-function oneWave() {
+/** Setup one fixed wave in frozen mode. Useful for debugging */
+function oneTestWave() {
    clearWaves();
+   frozen = 1;
+   lastRenderMillis = 1;
    var i = 0;
    waves[i++] = .5;
    waves[i++] = .5;
-   waves[i++] = 1.0;
+   waves[i++] = 1 / 1000.0;
    waves[i++] = .65;
 }
 
-
 function init() {
     var canvas = setupCanvas(),
-        setup = setupWebGL(canvas)
-        frameCounter = frameRateCounter();
+        setup = setupWebGL(canvas);
 
-    tickFns.push(function() { 
-        if (!frozen) { 
-          frameCounter(); 
-        }
-    });
-    initWaves();
-    // oneWave();
-    setupEvents(canvas, frameCounter);
+    randomWaves();
+    setupEvents(canvas);
+    control = controlPanel(randomWaves, toggleFreeze);
     program = setup.program;
     gl = setup.gl;
 }
 
 /** begin webgl animation */
 function start() {
+    stats = new Stats();
+    stats.showPanel( 0 );
+    document.body.appendChild( stats.dom );
     init();
     requestAnimationFrame(render);
 }
 
-/** return a function that's called with every frame rendering 
-  * and will update the frame rate display */
-function frameRateCounter() {
-    var lastReportSecond = 0,
-        framesThisSecond = 0;
-
-    return function() {
-        var millis = new Date().getTime(),
-            second = Math.trunc(millis / 1000.0);
-        if (second != lastReportSecond) {
-            document.getElementById("frameRate").textContent = framesThisSecond;
-            lastReportSecond = second;
-            framesThisSecond = 1;
-        } else {
-            framesThisSecond++;
-        }
-    };
-}
 
 /** render one frame, and repeat */
 function render(millis) {
-   time=time+(millis)-lastRenderMillis;
-    lastRenderMillis = millis;
-    if (frozen) {
-        millis = frozen;
+    stats.begin();
+    resize(gl); // TODO call this on resize events, not every frame
+    
+    if (!frozen) {
+        time+=(millis-lastRenderMillis)*control.speed;
     }
+        //millis = frozen;
+    lastRenderMillis = millis;
     tickFns.forEach(function(fn) { fn(millis);});
 
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.uniform1f(program.time, time/1000.0);
+    gl.uniform1i(program.waveType, control.wave);
+    gl.uniform1i(program.mode, control.mode);
     gl.uniform2f(program.resolution, window.innerWidth, window.innerHeight);
     gl.uniform4fv(program.waves, waves);
 
     gl.drawArrays(gl.TRIANGLES, 0, triangleVertices.length / 2);
+    stats.end();
     requestAnimationFrame(render);
 }
 
@@ -323,7 +365,8 @@ function compileShader(gl, id, params) {
   gl.compileShader(shader);
 
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.log("An error occurred compiling the shader: " + gl.getShaderInfoLog(shader));
+    console.error("An error occurred compiling the shader: " + gl.getShaderInfoLog(shader));
+    debugger;
     return null;
   }
 
