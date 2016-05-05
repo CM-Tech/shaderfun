@@ -28,21 +28,18 @@
             }
         </script>
         <script id="shader-fs" type="x-shader/x-fragment">
-            #
-            extension GL_OES_standard_derivatives: enable
+            #extension GL_OES_standard_derivatives: enable
 
-            # ifdef GL_ES
-             precision mediump float;#
-            endif
+            #ifdef GL_ES
+            precision mediump float;
+            #endif
 
-             uniform int waveType;
+            uniform int waveType;
             uniform float time;
             uniform int mode;
             uniform vec2 resolution;
             uniform float timeOscillator;
-            const int wavesLength = $ {
-                wavesLength
-            };
+            const int wavesLength = ${wavesLength};
             uniform vec4 waves[wavesLength]; // [x,y,time,hue]
 
             const float PI = 3.1415926535897932384626433832795;
